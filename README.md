@@ -146,13 +146,39 @@ Query the Iceberg table on the destination cluster:
 | `./kafka-connect-iceberg-sink.sh start` | Start all services |
 | `./kafka-connect-iceberg-sink.sh stop` | Stop all services |
 | `./kafka-connect-iceberg-sink.sh status` | Show status of all services |
-| `./kafka-connect-iceberg-sink.sh generate-logs` | Generate API logs on source MinIO |
+| `./kafka-connect-iceberg-sink.sh generate-logs` | Generate API logs on source MinIO (one-time) |
+| `./kafka-connect-iceberg-sink.sh continuous` | Generate logs continuously (Ctrl+C to stop) |
+| `./kafka-connect-iceberg-sink.sh produce [topic] [-n COUNT]` | Produce messages directly to Kafka |
 | `./kafka-connect-iceberg-sink.sh query` | Query Iceberg table on destination |
 | `./kafka-connect-iceberg-sink.sh logs [-f]` | View container logs |
 | `./kafka-connect-iceberg-sink.sh restart` | Restart all services |
 | `./kafka-connect-iceberg-sink.sh clean` | Stop and remove all data/volumes |
 
+### Continuous Mode Options
+
+```bash
+# Generate logs continuously with default settings (2s interval, 5 ops/batch)
+./kafka-connect-iceberg-sink.sh continuous
+
+# Custom interval and batch size
+./kafka-connect-iceberg-sink.sh continuous -i 5 -b 10  # 5s interval, 10 ops per batch
+```
+
+### Produce Command Options
+
+```bash
+# Produce 100 messages to all 3 topics (apilogs, errorlogs, auditlogs)
+./kafka-connect-iceberg-sink.sh produce
+
+# Produce to specific topic
+./kafka-connect-iceberg-sink.sh produce apilogs -n 50   # 50 messages to apilogs
+./kafka-connect-iceberg-sink.sh produce errorlogs      # 100 messages to errorlogs
+./kafka-connect-iceberg-sink.sh produce auditlogs -n 200
+```
+
 ## Endpoints
+
+Default ports (configurable via .env):
 
 | Service | Endpoint | Credentials |
 |---------|----------|-------------|
@@ -162,6 +188,7 @@ Query the Iceberg table on the destination cluster:
 | Destination MinIO Console | http://localhost:9011 | minioadmin/minioadmin |
 | Kafka | localhost:9092 | - |
 | Kafka Connect REST API | http://localhost:8083 | - |
+| Trino | http://localhost:9999 | - |
 
 ## Configuration
 
@@ -169,7 +196,7 @@ Query the Iceberg table on the destination cluster:
 
 ```bash
 # Source MinIO (with Kafka log targets from PR #2463)
-MINIO_SOURCE_IMAGE=praveenminio/kafka-connect:v1.0.0
+MINIO_SOURCE_IMAGE=praveenminio/eos:log
 
 # Destination MinIO (with Iceberg Tables support)
 MINIO_DEST_IMAGE=quay.io/minio/aistor/minio:EDGE.2025-12-13T08-46-12Z
@@ -184,7 +211,20 @@ MINIO_ROOT_PASSWORD=minioadmin
 # Iceberg configuration
 WAREHOUSE_NAME=kafkawarehouse
 NAMESPACE_NAME=streaming
-TABLE_NAME=events
+
+# Kafka Topics (3 log types)
+API_LOGS_TOPIC=apilogs
+ERROR_LOGS_TOPIC=errorlogs
+AUDIT_LOGS_TOPIC=auditlogs
+
+# Port Configuration (change if defaults conflict with your system)
+SOURCE_API_PORT=9000
+SOURCE_CONSOLE_PORT=9001
+DEST_API_PORT=9010
+DEST_CONSOLE_PORT=9011
+KAFKA_PORT=9092
+KAFKA_CONNECT_PORT=8083
+TRINO_PORT=9999
 ```
 
 ### Iceberg Connector Configuration

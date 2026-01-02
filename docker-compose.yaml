@@ -101,8 +101,8 @@ services:
     hostname: nginx-source
     container_name: nginx-source
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${SOURCE_API_PORT:-9000}:9000"
+      - "${SOURCE_CONSOLE_PORT:-9001}:9001"
     volumes:
       - ./nginx/nginx-source.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -164,8 +164,8 @@ services:
     hostname: nginx-dest
     container_name: nginx-dest
     ports:
-      - "9010:9000"
-      - "9011:9001"
+      - "${DEST_API_PORT:-9010}:9000"
+      - "${DEST_CONSOLE_PORT:-9011}:9001"
     volumes:
       - ./nginx/nginx-dest.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -194,8 +194,8 @@ services:
     hostname: kafka
     container_name: kafka
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - "${KAFKA_PORT:-9092}:9092"
+      - "${KAFKA_CONTROLLER_PORT:-9093}:9093"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
@@ -231,7 +231,7 @@ services:
       nginx-dest:
         condition: service_healthy
     ports:
-      - "8083:8083"
+      - "${KAFKA_CONNECT_PORT:-8083}:8083"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: kafka:29092
       CONNECT_REST_PORT: 8083
@@ -341,7 +341,7 @@ services:
       retries: 5
       start_period: 30s
     ports:
-      - "9999:8080"
+      - "${TRINO_PORT:-9999}:8080"
     networks:
       - kafka-iceberg
 

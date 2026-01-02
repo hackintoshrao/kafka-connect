@@ -55,12 +55,22 @@ COMMANDS:
   status          Show status of all services
   logs            Show logs (use -f for follow)
   generate-logs   Generate API logs by interacting with source MinIO
+  continuous      Generate logs continuously (Ctrl+C to stop)
+  produce         Produce messages directly to Kafka topics
   query           Query the Iceberg table on destination MinIO
   restart         Restart all services
   clean           Stop and remove all data
 
 OPTIONS:
   -h, --help      Show this help message
+
+CONTINUOUS MODE OPTIONS:
+  -i, --interval  Seconds between batches (default: 2)
+  -b, --batch     Operations per batch (default: 5)
+
+PRODUCE OPTIONS:
+  [topic]         Topic name: apilogs, errorlogs, auditlogs (or all if omitted)
+  -n COUNT        Number of messages per topic (default: 100)
 
 ARCHITECTURE:
   ┌─────────────────────┐     ┌─────────────────────┐
@@ -87,8 +97,16 @@ EXAMPLES:
   # Check status
   $0 status
 
-  # Generate logs on source MinIO
+  # Generate logs on source MinIO (one-time)
   $0 generate-logs
+
+  # Generate logs continuously (Ctrl+C to stop)
+  $0 continuous
+  $0 continuous -i 5 -b 10    # 5s interval, 10 ops per batch
+
+  # Produce messages directly to Kafka
+  $0 produce                   # 100 messages to all topics
+  $0 produce apilogs -n 50     # 50 messages to apilogs only
 
   # View logs
   $0 logs -f
@@ -589,13 +607,101 @@ generate_logs() {
     print_msg "$CYAN" "The Iceberg sink commits every 10 seconds."
     print_msg "$CYAN" ""
     print_msg "$CYAN" "View the events in Kafka:"
-    print_msg "$CYAN" "  docker exec kafka kafka-console-consumer --bootstrap-server localhost:29092 --topic events --from-beginning --max-messages 5"
+    print_msg "$CYAN" "  docker exec kafka kafka-console-consumer --bootstrap-server localhost:29092 --topic apilogs --from-beginning --max-messages 5"
     print_msg "$CYAN" ""
     print_msg "$CYAN" "Query the Iceberg table:"
     print_msg "$CYAN" "  $0 query"
     print_msg "$CYAN" ""
     print_msg "$CYAN" "View Destination MinIO Console (Iceberg data):"
-    print_msg "$CYAN" "  http://localhost:9011"
+    print_msg "$CYAN" "  http://localhost:${DEST_CONSOLE_PORT:-9011}"
+}
+
+# Generate logs continuously until Ctrl+C
+# Usage: generate_logs_continuous [--interval SECONDS]
+generate_logs_continuous() {
+    local interval=2
+    local batch_size=5
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --interval|-i)
+                interval="$2"
+                shift 2
+                ;;
+            --batch|-b)
+                batch_size="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    print_header "Continuous Log Generation Mode"
+
+    # Get configured ports
+    local source_api_port="${SOURCE_API_PORT:-9000}"
+
+    if ! curl -sf "http://localhost:${source_api_port}/minio/health/live" >/dev/null 2>&1; then
+        print_msg "$RED" "Error: Source MinIO is not running on port ${source_api_port}"
+        exit 1
+    fi
+
+    print_msg "$YELLOW" "Generating logs continuously..."
+    print_msg "$CYAN" "  Interval: ${interval}s between batches"
+    print_msg "$CYAN" "  Batch size: ${batch_size} operations per batch"
+    print_msg "$CYAN" ""
+    print_msg "$GREEN" "Press Ctrl+C to stop"
+    print_msg "$CYAN" ""
+
+    # Trap Ctrl+C
+    trap 'echo ""; print_msg "$YELLOW" "Stopping continuous log generation..."; exit 0' INT TERM
+
+    local iteration=0
+    local total_ops=0
+
+    # Create test bucket once
+    docker run --rm --network kafka-connect_kafka-iceberg \
+        -e MC_HOST_source=http://minioadmin:minioadmin@nginx-source:9000 \
+        minio/mc:latest mc mb source/continuous-logs-bucket --ignore-existing 2>/dev/null
+
+    while true; do
+        iteration=$((iteration + 1))
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+        # Run batch of operations
+        docker run --rm --network kafka-connect_kafka-iceberg \
+            -e MC_HOST_source=http://minioadmin:minioadmin@nginx-source:9000 \
+            minio/mc:latest bash -c "
+            for i in \$(seq 1 ${batch_size}); do
+                # Mix of operations: put, get, list, stat
+                op=\$((RANDOM % 4))
+                obj_id=\"obj-\${RANDOM}\"
+
+                case \$op in
+                    0) # PUT
+                        echo \"data-\$(date +%s)-\$i\" | mc pipe source/continuous-logs-bucket/\${obj_id}.txt 2>/dev/null
+                        ;;
+                    1) # GET (may fail if object doesn't exist, that's fine)
+                        mc cat source/continuous-logs-bucket/\${obj_id}.txt 2>/dev/null || true
+                        ;;
+                    2) # LIST
+                        mc ls source/continuous-logs-bucket/ >/dev/null 2>&1
+                        ;;
+                    3) # STAT
+                        mc stat source/continuous-logs-bucket/\${obj_id}.txt 2>/dev/null || true
+                        ;;
+                esac
+            done
+            " 2>/dev/null
+
+        total_ops=$((total_ops + batch_size))
+        printf "\r${CYAN}[%s] Iteration: %d | Total operations: %d${NC}" "$timestamp" "$iteration" "$total_ops"
+
+        sleep "$interval"
+    done
 }
 
 # Query the Iceberg table on destination MinIO
@@ -698,6 +804,10 @@ main() {
             ;;
         generate-logs)
             generate_logs
+            ;;
+        continuous)
+            shift
+            generate_logs_continuous "$@"
             ;;
         produce)
             shift
